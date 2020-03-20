@@ -1,8 +1,8 @@
 [package]
 name = "nu"
-version = "0.10.1"
-authors = ["Yehuda Katz <wycats@gmail.com>", "Jonathan Turner <jonathan.d.turner@gmail.com>", "Andrés N. Robalino <andres@androbtech.com>"]
-description = "A shell for the GitHub era"
+version = "0.11.1"
+authors = ["The Nu Project Contributors"]
+description = "A new kind of shell"
 license = "MIT"
 edition = "2018"
 readme = "README.md"
@@ -18,27 +18,25 @@ members = ["crates/*/"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-nu-cli = { version = "0.10.0", path = "./crates/nu-cli" }
-nu-source = { version = "0.10.0", path = "./crates/nu-source" }
-nu-plugin = { version = "0.10.0", path = "./crates/nu-plugin" }
-nu-protocol = { version = "0.10.0", path = "./crates/nu-protocol" }
-nu-errors = { version = "0.10.0", path = "./crates/nu-errors" }
-nu-parser = { version = "0.10.0", path = "./crates/nu-parser" }
-nu-value-ext = { version = "0.10.0", path = "./crates/nu-value-ext" }
-nu_plugin_average = { version = "0.10.0", path = "./crates/nu_plugin_average", optional=true }
-nu_plugin_binaryview = { version = "0.10.0", path = "./crates/nu_plugin_binaryview", optional=true }
-nu_plugin_fetch = { version = "0.10.0", path = "./crates/nu_plugin_fetch", optional=true }
-nu_plugin_inc = { version = "0.10.0", path = "./crates/nu_plugin_inc", optional=true }
-nu_plugin_match = { version = "0.10.0", path = "./crates/nu_plugin_match", optional=true }
-nu_plugin_post = { version = "0.10.0", path = "./crates/nu_plugin_post", optional=true }
-nu_plugin_ps = { version = "0.10.0", path = "./crates/nu_plugin_ps", optional=true }
-nu_plugin_shuffle = { version = "0.10.0", path = "./crates/nu_plugin_shuffle", optional=true }
-nu_plugin_str = { version = "0.10.0", path = "./crates/nu_plugin_str", optional=true }
-nu_plugin_sum = { version = "0.10.0", path = "./crates/nu_plugin_sum", optional=true }
-nu_plugin_sys = { version = "0.10.0", path = "./crates/nu_plugin_sys", optional=true }
-nu_plugin_textview = { version = "0.10.0", path = "./crates/nu_plugin_textview", optional=true }
-nu_plugin_tree = { version = "0.10.0", path = "./crates/nu_plugin_tree", optional=true }
-nu-macros = { version = "0.10.0", path = "./crates/nu-macros" }
+nu-cli = { version = "0.11.0", path = "./crates/nu-cli" }
+nu-source = { version = "0.11.0", path = "./crates/nu-source" }
+nu-plugin = { version = "0.11.0", path = "./crates/nu-plugin" }
+nu-protocol = { version = "0.11.0", path = "./crates/nu-protocol" }
+nu-errors = { version = "0.11.0", path = "./crates/nu-errors" }
+nu-parser = { version = "0.11.0", path = "./crates/nu-parser" }
+nu-value-ext = { version = "0.11.0", path = "./crates/nu-value-ext" }
+nu_plugin_average = { version = "0.11.0", path = "./crates/nu_plugin_average", optional=true }
+nu_plugin_binaryview = { version = "0.11.0", path = "./crates/nu_plugin_binaryview", optional=true }
+nu_plugin_fetch = { version = "0.11.0", path = "./crates/nu_plugin_fetch", optional=true }
+nu_plugin_inc = { version = "0.11.0", path = "./crates/nu_plugin_inc", optional=true }
+nu_plugin_match = { version = "0.11.0", path = "./crates/nu_plugin_match", optional=true }
+nu_plugin_post = { version = "0.11.0", path = "./crates/nu_plugin_post", optional=true }
+nu_plugin_ps = { version = "0.11.0", path = "./crates/nu_plugin_ps", optional=true }
+nu_plugin_str = { version = "0.11.0", path = "./crates/nu_plugin_str", optional=true }
+nu_plugin_sys = { version = "0.11.0", path = "./crates/nu_plugin_sys", optional=true }
+nu_plugin_textview = { version = "0.11.0", path = "./crates/nu_plugin_textview", optional=true }
+nu_plugin_tree = { version = "0.11.0", path = "./crates/nu_plugin_tree", optional=true }
+nu-macros = { version = "0.11.0", path = "./crates/nu-macros" }
 
 crossterm = { version = "0.16.0", optional = true }
 onig_sys = { version = "=69.1.0", optional = true }
@@ -47,7 +45,7 @@ syntect = { version = "3.2.0", optional = true }
 url = { version = "2.1.1", optional = true }
 
 clap = "2.33.0"
-ctrlc = "3.1.3"
+ctrlc = "3.1.4"
 dunce = "1.0.0"
 futures = { version = "0.3", features = ["compat", "io-compat"] }
 log = "0.4.8"
@@ -55,19 +53,19 @@ pretty_env_logger = "0.4.0"
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"
-nu-test-support = { version = "0.10.0", path = "./crates/nu-test-support" }
+nu-test-support = { version = "0.11.0", path = "./crates/nu-test-support" }
 
 [build-dependencies]
 toml = "0.5.6"
-serde = { version = "1.0.104", features = ["derive"] }
-nu-build = { version = "0.10.0", path = "./crates/nu-build" }
+serde = { version = "1.0.105", features = ["derive"] }
+nu-build = { version = "0.11.0", path = "./crates/nu-build" }
 
 [features]
 # Test executables
 test-bins = []
 
 default = ["sys", "ps", "textview", "inc", "str"]
-stable = ["default", "starship-prompt", "binaryview", "match", "tree", "average", "shuffle", "sum", "post", "fetch", "clipboard-cli"]
+stable = ["default", "starship-prompt", "binaryview", "match", "tree", "average", "post", "fetch", "clipboard-cli"]
 
 # Default
 textview = ["crossterm", "syntect", "onig_sys", "url", "nu_plugin_textview"]
@@ -82,8 +80,6 @@ binaryview = ["nu_plugin_binaryview"]
 fetch = ["nu_plugin_fetch"]
 match = ["nu_plugin_match"]
 post = ["nu_plugin_post"]
-shuffle = ["nu_plugin_shuffle"]
-sum = ["nu_plugin_sum"]
 trace = ["nu-parser/trace"]
 tree = ["nu_plugin_tree"]
 
@@ -168,16 +164,6 @@ required-features = ["match"]
 name = "nu_plugin_stable_post"
 path = "src/plugins/nu_plugin_stable_post.rs"
 required-features = ["post"]
-
-[[bin]]
-name = "nu_plugin_stable_shuffle"
-path = "src/plugins/nu_plugin_stable_shuffle.rs"
-required-features = ["shuffle"]
-
-[[bin]]
-name = "nu_plugin_stable_sum"
-path = "src/plugins/nu_plugin_stable_sum.rs"
-required-features = ["sum"]
 
 [[bin]]
 name = "nu_plugin_stable_tree"

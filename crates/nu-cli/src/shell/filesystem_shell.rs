@@ -14,7 +14,7 @@ use nu_parser::ExpandContext;
 use nu_protocol::{Primitive, ReturnSuccess, UntaggedValue};
 use rustyline::completion::FilenameCompleter;
 use rustyline::hint::{Hinter, HistoryHinter};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::Ordering;
 use trash as SendToTrash;
 
@@ -78,6 +78,29 @@ impl FilesystemShell {
             hinter: HistoryHinter {},
         }
     }
+
+    fn canonicalize(&self, path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
+        let path = if path.as_ref().is_relative() {
+            let components = path.as_ref().components();
+            let mut result = PathBuf::from(self.path());
+            for component in components {
+                match component {
+                    Component::CurDir => { /* ignore current dir */ }
+                    Component::ParentDir => {
+                        result.pop();
+                    }
+                    Component::Normal(normal) => result.push(normal),
+                    _ => {}
+                }
+            }
+
+            result
+        } else {
+            path.as_ref().into()
+        };
+
+        dunce::canonicalize(path)
+    }
 }
 
 impl Shell for FilesystemShell {
@@ -93,6 +116,7 @@ impl Shell for FilesystemShell {
         &self,
         LsArgs {
             path,
+            all,
             full,
             short_names,
             with_symlink_targets,
@@ -107,7 +131,7 @@ impl Shell for FilesystemShell {
                 let p_tag = p.tag;
                 let mut p = p.item;
                 if p.is_dir() {
-                    if is_dir_empty(&p) {
+                    if is_empty_dir(&p) {
                         return Ok(OutputStream::empty());
                     }
                     p.push("*");
@@ -115,7 +139,7 @@ impl Shell for FilesystemShell {
                 (p, p_tag)
             }
             None => {
-                if is_dir_empty(&self.path().into()) {
+                if is_empty_dir(&self.path()) {
                     return Ok(OutputStream::empty());
                 } else {
                     (PathBuf::from("./*"), context.name.clone())
@@ -123,11 +147,9 @@ impl Shell for FilesystemShell {
             }
         };
 
-        let mut paths = match glob::glob(&path.to_string_lossy()) {
-            Ok(g) => Ok(g),
-            Err(e) => Err(ShellError::labeled_error("Glob error", e.msg, &p_tag)),
-        }?
-        .peekable();
+        let mut paths = glob::glob(&path.to_string_lossy())
+            .map_err(|e| ShellError::labeled_error("Glob error", e.to_string(), &p_tag))?
+            .peekable();
 
         if paths.peek().is_none() {
             return Err(ShellError::labeled_error(
@@ -137,35 +159,53 @@ impl Shell for FilesystemShell {
             ));
         }
 
-        let stream = async_stream! {
+        // Generated stream: impl Stream<Item = Result<ReturnSuccess, ShellError>
+        let stream = async_stream::try_stream! {
             for path in paths {
+                // Handle CTRL+C presence
                 if ctrl_c.load(Ordering::SeqCst) {
                     break;
                 }
-                match path {
-                    Ok(p) => match std::fs::symlink_metadata(&p) {
-                        Ok(m) => {
-                            match dir_entry_dict(&p, Some(&m), name_tag.clone(), full, short_names, with_symlink_targets) {
-                                Ok(d) => yield ReturnSuccess::value(d),
-                                Err(e) => yield Err(e)
-                            }
-                        }
-                        Err(e) => {
-                            match e.kind() {
-                                PermissionDenied => {
-                                    match dir_entry_dict(&p, None, name_tag.clone(), full, short_names, with_symlink_targets) {
-                                        Ok(d) => yield ReturnSuccess::value(d),
-                                        Err(e) => yield Err(e)
-                                    }
-                                },
-                                _ => yield Err(ShellError::from(e))
-                            }
-                        }
-                    }
-                    Err(e) => yield Err(e.into_error().into()),
+
+                // Map GlobError to ShellError and gracefully try to unwrap the path
+                let path = path.map_err(|e| ShellError::from(e.into_error()))?;
+
+                // Skip if '--all/-a' flag is present and this path is hidden
+                if !all && is_hidden_dir(&path) {
+                    continue;
                 }
+
+                // Get metadata from current path, if we don't have enough
+                // permissions to stat on file don't use any metadata, otherwise
+                // return the error and gracefully unwrap metadata (which yields
+                // Option<Metadata>)
+                let metadata = match std::fs::symlink_metadata(&path) {
+                    Ok(metadata) => Ok(Some(metadata)),
+                    Err(e) => if let PermissionDenied = e.kind() {
+                        Ok(None)
+                    } else {
+                        Err(e)
+                    },
+                }?;
+
+                // Build dict entry for this path and possibly using some metadata.
+                // Map the possible dict entry into a Value, gracefully unwrap it
+                // with '?'
+                let entry = dir_entry_dict(
+                    &path,
+                    metadata.as_ref(),
+                    name_tag.clone(),
+                    full,
+                    short_names,
+                    with_symlink_targets
+                )
+                .map(|entry| ReturnSuccess::Value(entry.into()))?;
+
+                // Finally yield the generated entry that was mapped to Value
+                yield entry;
             }
         };
+
         Ok(stream.to_output_stream())
     }
 
@@ -184,11 +224,10 @@ impl Shell for FilesystemShell {
             Some(v) => {
                 let target = v.as_path()?;
 
-                if PathBuf::from("-") == target {
+                if target == Path::new("-") {
                     PathBuf::from(&self.last_path)
                 } else {
-                    let path = PathBuf::from(self.path());
-                    let path = dunce::canonicalize(path.join(&target)).map_err(|_| {
+                    let path = self.canonicalize(target).map_err(|_| {
                         ShellError::labeled_error(
                             "Cannot change to directory",
                             "directory not found",
@@ -209,8 +248,7 @@ impl Shell for FilesystemShell {
                         let has_exec = path
                             .metadata()
                             .map(|m| {
-                                let mode = umask::Mode::from(m.permissions().mode());
-                                mode.has(umask::ALL_EXEC)
+                                umask::Mode::from(m.permissions().mode()).has(umask::USER_READ)
                             })
                             .map_err(|e| {
                                 ShellError::labeled_error(
@@ -1130,9 +1168,30 @@ impl Shell for FilesystemShell {
     }
 }
 
-fn is_dir_empty(d: &PathBuf) -> bool {
-    match d.read_dir() {
-        Err(_e) => true,
+fn is_empty_dir(dir: impl AsRef<Path>) -> bool {
+    match dir.as_ref().read_dir() {
+        Err(_) => true,
         Ok(mut s) => s.next().is_none(),
+    }
+}
+
+fn is_hidden_dir(dir: impl AsRef<Path>) -> bool {
+    cfg_if::cfg_if! {
+        if #[cfg(windows)] {
+            use std::os::windows::fs::MetadataExt;
+
+            if let Ok(metadata) = dir.as_ref().metadata() {
+                let attributes = metadata.file_attributes();
+                // https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
+                (attributes & 0x2) != 0
+            } else {
+                false
+            }
+        } else {
+            dir.as_ref()
+                .file_name()
+                .map(|name| name.to_string_lossy().starts_with('.'))
+                .unwrap_or(false)
+        }
     }
 }

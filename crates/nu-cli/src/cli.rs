@@ -10,7 +10,10 @@ use crate::prelude::*;
 use futures_codec::FramedRead;
 
 use nu_errors::ShellError;
-use nu_parser::{ClassifiedPipeline, PipelineShape, SpannedToken, TokensIterator};
+use nu_parser::{
+    ClassifiedCommand, ClassifiedPipeline, ExternalCommand, PipelineShape, SpannedToken,
+    TokensIterator,
+};
 use nu_protocol::{Primitive, ReturnSuccess, Signature, UntaggedValue, Value};
 
 use log::{debug, log_enabled, trace};
@@ -240,7 +243,6 @@ pub fn create_default_context(
             per_item_command(Ls),
             per_item_command(Du),
             whole_stream_command(Cd),
-            whole_stream_command(Env),
             per_item_command(Remove),
             per_item_command(Open),
             whole_stream_command(Config),
@@ -306,16 +308,20 @@ pub fn create_default_context(
             whole_stream_command(Rename),
             whole_stream_command(Uniq),
             // Table manipulation
+            whole_stream_command(Shuffle),
             whole_stream_command(Wrap),
             whole_stream_command(Pivot),
             // Data processing
             whole_stream_command(Histogram),
+            whole_stream_command(Sum),
             // File format output
             whole_stream_command(ToBSON),
             whole_stream_command(ToCSV),
+            whole_stream_command(ToHTML),
             whole_stream_command(ToJSON),
             whole_stream_command(ToSQLite),
             whole_stream_command(ToDB),
+            whole_stream_command(ToMarkdown),
             whole_stream_command(ToTOML),
             whole_stream_command(ToTSV),
             whole_stream_command(ToURL),
@@ -365,7 +371,7 @@ pub async fn run_pipeline_standalone(
     redirect_stdin: bool,
     context: &mut Context,
 ) -> Result<(), Box<dyn Error>> {
-    let line = process_line(Ok(pipeline), context, redirect_stdin).await;
+    let line = process_line(Ok(pipeline), context, redirect_stdin, false).await;
 
     match line {
         LineResult::Success(line) => {
@@ -514,7 +520,7 @@ pub async fn cli() -> Result<(), Box<dyn Error>> {
             initial_command = None;
         }
 
-        let line = process_line(readline, &mut context, false).await;
+        let line = process_line(readline, &mut context, false, true).await;
 
         // Check the config to see if we need to update the path
         // TODO: make sure config is cached so we don't path this load every call
@@ -597,6 +603,7 @@ async fn process_line(
     readline: Result<String, ReadlineError>,
     ctx: &mut Context,
     redirect_stdin: bool,
+    cli_mode: bool,
 ) -> LineResult {
     match &readline {
         Ok(line) if line.trim() == "" => LineResult::Success(line.clone()),
@@ -615,12 +622,68 @@ async fn process_line(
             debug!("=== Parsed ===");
             debug!("{:#?}", result);
 
-            let pipeline = classify_pipeline(&result, ctx, &Text::from(line));
+            let pipeline = classify_pipeline(&result, &ctx, &Text::from(line));
 
             if let Some(failure) = pipeline.failed {
                 return LineResult::Error(line.to_string(), failure.into());
             }
 
+            // There's a special case to check before we process the pipeline:
+            // If we're giving a path by itself
+            // ...and it's not a command in the path
+            // ...and it doesn't have any arguments
+            // ...and we're in the CLI
+            // ...then change to this directory
+            if cli_mode && pipeline.commands.list.len() == 1 {
+                if let ClassifiedCommand::External(ExternalCommand {
+                    ref name, ref args, ..
+                }) = pipeline.commands.list[0]
+                {
+                    if dunce::canonicalize(name).is_ok()
+                        && PathBuf::from(name).is_dir()
+                        && which::which(name).is_err()
+                        && args.list.is_empty()
+                    {
+                        // Here we work differently if we're in Windows because of the expected Windows behavior
+                        #[cfg(windows)]
+                        {
+                            if name.ends_with(':') {
+                                // This looks like a drive shortcut. We need to a) switch drives and b) go back to the previous directory we were viewing on that drive
+                                // But first, we need to save where we are now
+                                let current_path = ctx.shell_manager.path();
+
+                                let split_path: Vec<_> = current_path.split(':').collect();
+                                if split_path.len() > 1 {
+                                    ctx.windows_drives_previous_cwd
+                                        .lock()
+                                        .insert(split_path[0].to_string(), current_path);
+                                }
+
+                                let name = name.to_uppercase();
+                                let new_drive: Vec<_> = name.split(':').collect();
+
+                                if let Some(val) =
+                                    ctx.windows_drives_previous_cwd.lock().get(new_drive[0])
+                                {
+                                    ctx.shell_manager.set_path(val.to_string());
+                                    return LineResult::Success(line.to_string());
+                                } else {
+                                    ctx.shell_manager.set_path(name.to_string());
+                                    return LineResult::Success(line.to_string());
+                                }
+                            } else {
+                                ctx.shell_manager.set_path(name.to_string());
+                                return LineResult::Success(line.to_string());
+                            }
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            ctx.shell_manager.set_path(name.to_string());
+                            return LineResult::Success(line.to_string());
+                        }
+                    }
+                }
+            }
             let input_stream = if redirect_stdin {
                 let file = futures::io::AllowStdIo::new(std::io::stdin());
                 let stream = FramedRead::new(file, MaybeTextCodec).map(|line| {
@@ -675,9 +738,8 @@ async fn process_line(
                                         break;
                                     }
                                 }
-                                _ => {
-                                    break;
-                                }
+                                Ok(None) => break,
+                                Err(e) => return LineResult::Error(line.to_string(), e),
                             }
                         }
                     }
